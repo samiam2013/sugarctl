@@ -54,7 +54,7 @@ func main() {
 
 	cons, err := getConnections(acc)
 	if err != nil {
-		slog.Error("Failed getting connections: %w", err)
+		slog.Error("Failed getting connections", "error", err)
 		return
 	}
 	_ = cons
