@@ -2,15 +2,18 @@ package main
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/joho/godotenv"
 )
@@ -46,6 +49,16 @@ func main() {
 	}
 	slog.Info("Login successful", "account", acc)
 
+	slog.Info("waiting 10 seconds for the api servers to sync")
+	time.Sleep(10 * time.Second)
+
+	cons, err := getConnections(acc)
+	if err != nil {
+		slog.Error("Failed getting connections: %w", err)
+		return
+	}
+	_ = cons
+
 }
 
 type account struct {
@@ -70,10 +83,10 @@ func login(user, pass string) (account, error) {
 		u.String(),
 		bytes.NewBuffer(b))
 	//r.Header.Set("accept-encoding", "gzip")
-	r.Header.Set("cache-control", "no-cache")
-	r.Header.Set("connection", "Keep-Alive")
-	r.Header.Set("product", libreProduct)
-	r.Header.Set("version", libreVersion)
+	r.Header.Set("Cache-Control", "No-Cache")
+	r.Header.Set("Connection", "Keep-Alive")
+	r.Header.Set("Product", libreProduct)
+	r.Header.Set("Version", libreVersion)
 	r.Header.Set("Content-Type", "application/json")
 
 	// make the request
@@ -83,7 +96,7 @@ func login(user, pass string) (account, error) {
 		return acc, fmt.Errorf("Failed to make request: %w", err)
 	}
 	defer resp.Body.Close()
-	body, err := ioutil.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return acc, fmt.Errorf("Failed to read response body: %w", err)
 	}
@@ -102,5 +115,37 @@ type connections struct{}
 
 func getConnections(acc account) (connections, error) {
 	cons := connections{}
+	u, err := url.Parse(baseURL + "/llu/connections")
+	if err != nil {
+		return cons, fmt.Errorf("Failed to parse URL for request: %w", err)
+	}
+
+	r, err := http.NewRequest(http.MethodGet, u.String(), nil)
+	if err != nil {
+		return cons, fmt.Errorf("Failed to create request for request: %w", err)
+	}
+	sha256id := sha256.New()
+	sha256id.Write([]byte(acc.accountID))
+	hexIDhash := hex.EncodeToString(sha256id.Sum(nil))
+	r.Header.Set("Authorization", "Bearer "+acc.token)
+	r.Header.Set("Account-ID", string(hexIDhash))
+	r.Header.Set("Cache-Control", "No-Cache")
+	r.Header.Set("Connection", "Keep-Alive")
+	r.Header.Set("Product", libreProduct)
+	r.Header.Set("Version", libreVersion)
+	r.Header.Set("Content-Type", "application/json")
+
+	c := http.Client{}
+	resp, err := c.Do(r)
+	if err != nil {
+		return cons, fmt.Errorf("Failed to do request for request: %w", err)
+	}
+	defer resp.Body.Close()
+	b, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return cons, fmt.Errorf("Failed to read response body for request: %w", err)
+	}
+	fmt.Println(string(b))
+
 	return cons, errors.New("Implementation not finished")
 }
