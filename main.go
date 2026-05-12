@@ -55,10 +55,25 @@ func main() {
 			slog.Error("Failed getting connections", "error", err)
 			return
 		}
+		measureTime := connData.Data[0].GlucoseMeasurement.FactoryTimestamp //.Timestamp
+		mgPerDL := connData.Data[0].GlucoseMeasurement.ValueInMgPerDl
 
-		fmt.Printf("sugar level: %d mg/dL\n",
-			connData.Data[0].GlucoseMeasurement.ValueInMgPerDl)
-		time.Sleep(time.Second * 60)
+		// example: 5/12/2026 2:16:28 PM
+		// Golang date format set: https://golang.org/pkg/time/#pkg-constants
+		const timeFMT = "1/2/2006 3:04:05 PM"
+		measureTimeParsed, err := time.Parse(timeFMT, measureTime)
+		if err != nil {
+			slog.Error("Failed parsing time", "error", err)
+			return
+		}
+
+		fmt.Printf("%s %d mg/dL\n", measureTime, mgPerDL)
+
+		nextMeasureTime := measureTimeParsed.Add(60 * time.Second)
+		nextRequestTime := nextMeasureTime.Add(5 * time.Second)
+		waitFor := time.Until(nextRequestTime)
+		fmt.Printf("Waiting %s for next measurement at %s\n", waitFor.Truncate(time.Second), nextRequestTime)
+		time.Sleep(waitFor)
 	}
 
 }
@@ -110,6 +125,11 @@ func (acc *account) login() error {
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return fmt.Errorf("Failed to read response body: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		fmt.Println(string(body))
+		return fmt.Errorf("Request failed with status code %d", resp.StatusCode)
 	}
 
 	lr := loginResponse{}
