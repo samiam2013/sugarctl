@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -11,7 +12,9 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/joho/godotenv"
@@ -22,6 +25,11 @@ const userPass = "LIBRE_LINKUP_PASS"
 const libreProduct = "llu.android"
 const libreVersion = "4.16.0"
 const baseURL = "https://api-us.libreview.io"
+
+type bgReading struct {
+	mgPerDL    uint16
+	recordedAt time.Time
+}
 
 func main() {
 	slog.Info("Starting sugarctl")
@@ -41,22 +49,68 @@ func main() {
 		"user_len", len(userInput),
 		"pass_len", len(passInput))
 
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /", bgView)
+
 	acc := NewAccount(userInput, passInput)
 	err := acc.login()
 	if err != nil {
 		slog.Error("Login failed", "error", err)
 		return
 	}
-	slog.Info("Login successful", "account", acc)
+	slog.Info("Login successful") //, "account", acc)
 
+	ctx, cancel := context.WithCancel(context.Background())
+	readings := make(chan bgReading)
+	go pollData(cancel, acc, readings)
+
+	// listen for interrupt or kill signals to stop the program
+	sigC := make(chan os.Signal, 1)
+	signal.Notify(sigC, os.Interrupt, syscall.SIGTERM)
+
+	if err := http.ListenAndServe(":8081", mux); err != nil {
+		slog.Error("HTTP server failed", "error", err)
+		return
+	}
+
+	// log readings for now
+	go func() {
+		for {
+			reading := <-readings
+			fmt.Printf("%+v", reading)
+		}
+	}()
+
+	select {
+	case <-ctx.Done():
+		slog.Info("Polling data failed")
+		return
+	case <-sigC:
+		slog.Info("Received signal, stopping")
+		return
+	}
+}
+
+func bgView(w http.ResponseWriter, r *http.Request) {
+	defer r.Body.Close()
+	w.Write([]byte("not implemented"))
+}
+
+func pollData(cancel context.CancelFunc, acc account, readings chan bgReading) {
+	defer cancel()
 	for {
 		connData, err := acc.getConnections()
 		if err != nil {
 			slog.Error("Failed getting connections", "error", err)
 			return
 		}
-		measureTime := connData.Data[0].GlucoseMeasurement.FactoryTimestamp //.Timestamp
-		mgPerDL := connData.Data[0].GlucoseMeasurement.ValueInMgPerDl
+		if len(connData.Data) == 0 {
+			slog.Error("No data received")
+			return
+		}
+		data := connData.Data[0].GlucoseMeasurement
+		measureTime := data.FactoryTimestamp // .Timestamp for local time
+		mgPerDL := data.ValueInMgPerDl
 
 		// example: 5/12/2026 2:16:28 PM
 		// Golang date format set: https://golang.org/pkg/time/#pkg-constants
@@ -67,15 +121,17 @@ func main() {
 			return
 		}
 
-		fmt.Printf("%s %d mg/dL\n", measureTime, mgPerDL)
+		readings <- bgReading{mgPerDL: uint16(mgPerDL), recordedAt: measureTimeParsed}
 
 		nextMeasureTime := measureTimeParsed.Add(60 * time.Second)
 		nextRequestTime := nextMeasureTime.Add(5 * time.Second)
 		waitFor := time.Until(nextRequestTime)
+		if waitFor < time.Duration(0) { // in case previous measurement was more than 60 seconds ago (lagging)
+			waitFor = 65 * time.Second
+		}
 		fmt.Printf("Waiting %s for next measurement at %s\n", waitFor.Truncate(time.Second), nextRequestTime)
 		time.Sleep(waitFor)
 	}
-
 }
 
 type account struct {
