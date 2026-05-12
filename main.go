@@ -68,16 +68,19 @@ func main() {
 	sigC := make(chan os.Signal, 1)
 	signal.Notify(sigC, os.Interrupt, syscall.SIGTERM)
 
-	if err := http.ListenAndServe(":8081", mux); err != nil {
-		slog.Error("HTTP server failed", "error", err)
-		return
-	}
+	go func() {
+		if err := http.ListenAndServe(":8081", mux); err != nil {
+			slog.Error("HTTP server failed", "error", err)
+		}
+	}()
 
 	// log readings for now
 	go func() {
 		for {
 			reading := <-readings
-			fmt.Printf("%+v", reading)
+			fmt.Printf("%s\t%d mg/dL",
+				reading.recordedAt.Format(time.RFC3339),
+				reading.mgPerDL)
 		}
 	}()
 
@@ -129,7 +132,7 @@ func pollData(cancel context.CancelFunc, acc account, readings chan bgReading) {
 		if waitFor < time.Duration(0) { // in case previous measurement was more than 60 seconds ago (lagging)
 			waitFor = 65 * time.Second
 		}
-		fmt.Printf("Waiting %s for next measurement at %s\n", waitFor.Truncate(time.Second), nextRequestTime)
+		// fmt.Printf("Waiting %s for next measurement at %s\n", waitFor.Truncate(time.Second), nextRequestTime)
 		time.Sleep(waitFor)
 	}
 }
