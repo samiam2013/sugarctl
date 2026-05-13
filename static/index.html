@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="en">
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@700&display=swap');
+
+body {
+  background-color: green;
+}
+
+#glucose {
+  font: bold 48px 'Montserrat', sans-serif;
+  color: white;
+}
+</style>
+<script>
+    const src = new EventSource("/bg");
+    src.onmessage = (e) => {
+        const { glucose, trend } = JSON.parse(e.data);
+        document.getElementById("glucose").textContent = `${glucose} ${trend}`;
+    };
+</script>
+<div id="glucose">--</div>
+
+</html>

@@ -49,9 +49,6 @@ func main() {
 		"user_len", len(userInput),
 		"pass_len", len(passInput))
 
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /", bgView)
-
 	acc := NewAccount(userInput, passInput)
 	err := acc.login()
 	if err != nil {
@@ -64,6 +61,10 @@ func main() {
 	readings := make(chan bgReading)
 	go pollData(cancel, acc, readings)
 
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /bg", bgSSE(readings))
+	mux.Handle("GET /", http.FileServer(http.Dir("./static")))
+
 	// listen for interrupt or kill signals to stop the program
 	sigC := make(chan os.Signal, 1)
 	signal.Notify(sigC, os.Interrupt, syscall.SIGTERM)
@@ -71,16 +72,6 @@ func main() {
 	go func() {
 		if err := http.ListenAndServe(":8081", mux); err != nil {
 			slog.Error("HTTP server failed", "error", err)
-		}
-	}()
-
-	// log readings for now
-	go func() {
-		for {
-			reading := <-readings
-			fmt.Printf("%s\t%d mg/dL",
-				reading.recordedAt.Format(time.RFC3339),
-				reading.mgPerDL)
 		}
 	}()
 
@@ -94,9 +85,60 @@ func main() {
 	}
 }
 
-func bgView(w http.ResponseWriter, r *http.Request) {
-	defer r.Body.Close()
-	w.Write([]byte("not implemented"))
+var arrowSymbol = map[string]string{
+	"up":       "⬆️",
+	"rising":   "↗️",
+	"sideways": "➡️",
+	"dropping": "↘️",
+	"down":     "⬇️",
+}
+
+func bgSSE(readings chan bgReading) http.HandlerFunc {
+	subscriptions := map[chan bgReading]struct{}{}
+	go func() {
+		for {
+			read := <-readings
+			// fmt.Println("got reading: ", read.mgPerDL)
+			for subscription := range subscriptions {
+				// fmt.Println("propogated reading")
+				subscription <- read
+			}
+		}
+	}()
+	return func(w http.ResponseWriter, r *http.Request) {
+		defer r.Body.Close()
+		sub := make(chan bgReading)
+		subscriptions[sub] = struct{}{}
+		defer func() { delete(subscriptions, sub) }()
+
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("Connection", "keep-alive")
+		w.Header().Set("Access-Control-Allow-Origin", "*") // OBS needs this
+
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			http.Error(w, "streaming unsupported", http.StatusInternalServerError)
+			return
+		}
+
+		for {
+			reading := <-sub
+			// fmt.Println("marshalling reading recieved by subscription: ", reading.mgPerDL)
+			chicago, _ := time.LoadLocation("America/Chicago")
+			data, err := json.Marshal(
+				map[string]any{
+					"glucose": reading.mgPerDL,
+					"trend":   arrowSymbol["sideways"],
+					"time":    reading.recordedAt.In(chicago).Format("15:04")})
+			if err != nil {
+				slog.Error("Failed to marshal bgReading for subscription", "error", err)
+				return
+			}
+			fmt.Fprintf(w, "data: %s\n\n", data)
+			flusher.Flush()
+		}
+	}
 }
 
 func pollData(cancel context.CancelFunc, acc account, readings chan bgReading) {
