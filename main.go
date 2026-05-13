@@ -28,6 +28,7 @@ const baseURL = "https://api-us.libreview.io"
 
 type bgReading struct {
 	mgPerDL    uint16
+	trendArrow uint8
 	recordedAt time.Time
 }
 
@@ -85,12 +86,13 @@ func main() {
 	}
 }
 
-var arrowSymbol = map[string]string{
-	"up":       "⬆️",
-	"rising":   "↗️",
-	"sideways": "➡️",
-	"dropping": "↘️",
-	"down":     "⬇️",
+var arrowSymbol = map[uint8]string{
+	0: "?",
+	1: "⬇️",
+	2: "↘️",
+	3: "➡️",
+	4: "↗️",
+	5: "⬆️",
 }
 
 func bgSSE(readings chan bgReading) http.HandlerFunc {
@@ -129,7 +131,7 @@ func bgSSE(readings chan bgReading) http.HandlerFunc {
 			data, err := json.Marshal(
 				map[string]any{
 					"glucose": reading.mgPerDL,
-					"trend":   arrowSymbol["sideways"],
+					"trend":   arrowSymbol[reading.trendArrow],
 					"time":    reading.recordedAt.In(chicago).Format("15:04")})
 			if err != nil {
 				slog.Error("Failed to marshal bgReading for subscription", "error", err)
@@ -166,7 +168,10 @@ func pollData(cancel context.CancelFunc, acc account, readings chan bgReading) {
 			return
 		}
 
-		readings <- bgReading{mgPerDL: uint16(mgPerDL), recordedAt: measureTimeParsed}
+		readings <- bgReading{
+			mgPerDL:    uint16(mgPerDL),
+			recordedAt: measureTimeParsed,
+			trendArrow: uint8(data.TrendArrow)}
 
 		nextMeasureTime := measureTimeParsed.Add(60 * time.Second)
 		nextRequestTime := nextMeasureTime.Add(5 * time.Second)
