@@ -16,8 +16,6 @@ import (
 	"strings"
 	"syscall"
 	"time"
-
-	"github.com/joho/godotenv"
 )
 
 const userEnv = "LIBRE_LINKUP_USER"
@@ -35,11 +33,11 @@ type bgReading struct {
 func main() {
 	slog.Info("Starting sugarctl")
 
-	if err := godotenv.Load(); err != nil {
-		slog.Error("Failed to load environment", "err", err)
-		return
-	}
-	slog.Info("Environment loaded")
+	// if err := godotenv.Load(); err != nil {
+	// 	slog.Error("Failed to load environment", "err", err)
+	// 	return
+	// }
+	// slog.Info("Environment loaded")
 
 	userInput, passInput := os.Getenv(userEnv), os.Getenv(userPass)
 	if strings.TrimSpace(userInput) == "" || strings.TrimSpace(passInput) == "" {
