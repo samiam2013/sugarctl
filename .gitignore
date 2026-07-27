@@ -33,3 +33,6 @@ go.work.sum
 
 # locally used example data with PII
 *.example.json
+
+# don't save the compiled binary
+sugarctl
